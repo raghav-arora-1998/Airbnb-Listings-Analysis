@@ -1,0 +1,328 @@
+---
+title: ""
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+---
+
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+# Airbnb airbnb
+
+## Libraries 
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(here)
+library(tidymodels)
+library(tidyverse)
+library(ggplot2)
+library(ggcorrplot)
+library(vip)
+library(rpart.plot)
+library(caret)
+library(caTools)
+library(dplyr)
+library(MASS)
+library(janitor)
+library(car)
+library(C50)
+library(caret)
+library(gains)
+library(pROC)
+library(pls)
+library(forecast)
+library(randomForest)
+library(kableExtra)
+```
+
+## Data Import
+```{r}
+airbnb <- read_csv("Listings.csv")
+```
+
+## Data Cleaning
+```{r}
+airbnb <- subset(airbnb, select = -c(5,6,7,8,14,26,27,28,29,30,31,32) )
+```
+
+```{r}
+airbnb$amenities <- airbnb$amenities  %>%
+  str_remove("\\[") %>%
+  str_remove("\\]") %>%
+  str_remove_all('\\"')
+```
+
+```{r}
+num_of_amenities <- airbnb$amenities %>% 
+  str_count(",") + 1
+num_of_amenities <- data.frame(num_of_amenities)
+
+airbnb <- data.frame(airbnb, num_of_amenities)
+
+airbnb <- subset(airbnb, select = -c(17))
+```
+
+```{r}
+airbnb <- airbnb %>% 
+  filter(city == 'New York')
+```
+
+```{r}
+airbnb <- airbnb %>% 
+  drop_na()
+```
+
+```{r}
+sum(is.na(airbnb))
+```
+
+```{r}
+airbnb %>%  write_csv("airbnb.csv")
+```
+
+```{r}
+airbnb <- subset(airbnb, select = -c(1,2,3,10))
+```
+
+
+```{r}
+airbnb$host_is_superhost <- ifelse(airbnb$host_is_superhost == "TRUE", 1,0)
+airbnb$host_has_profile_pic <- ifelse(airbnb$host_has_profile_pic == "TRUE", 1,0)
+airbnb$host_identity_verified <- ifelse(airbnb$host_identity_verified == "TRUE", 1,0)
+airbnb$instant_bookable <- ifelse(airbnb$instant_bookable == "TRUE", 1,0)
+
+airbnb$neighbourhood <- as.factor(airbnb$neighbourhood)
+airbnb$property_type <- as.factor(airbnb$property_type)
+airbnb$room_type <- as.factor(airbnb$room_type)
+
+# Select only categorical variables in the dataframe
+categorical_vars <- airbnb %>% select_if(is.factor)
+
+# Use the model.matrix function to create dummy variables
+dummy_vars <- model.matrix(~ . - 1, data = categorical_vars)
+
+# Add column names to dummy variables
+colnames(dummy_vars) <- sub("^[^.]+\\.", "", colnames(dummy_vars))
+
+# Combine the dummy variables with the original dataframe
+airbnb <- bind_cols(airbnb[, -which(names(airbnb) %in% names(categorical_vars))], dummy_vars)
+
+airbnb$host_since <- as.numeric(as.Date(airbnb$host_since))
+
+airbnb <- airbnb %>% 
+  relocate(price, .before = 1)
+
+airbnb <- as.data.frame(airbnb)
+```
+
+## Data Exploration
+
+```{r}
+# Extract the feature variables
+X <- airbnb[, -1]
+
+# Extract the target variable
+Y <- airbnb[, 1]
+
+corr <- cor(X)
+
+# Find the indices of the predictor variables with the lowest correlation between each other
+idx <- order(apply(corr, 2, function(x) min(abs(x[x != 1]))))
+
+# Print the selected feature names
+print(colnames(X)[idx])
+```
+
+```{r}
+# Compute the correlation between the target variable and each predictor variable
+corr <- cor(X, Y)
+
+# Select the predicted variable features with the highest correlation to the target variable
+k <- 50
+cfs2 <- order(abs(corr), decreasing = TRUE)[1:k]
+
+# Print the selected features
+print(names(X)[cfs2])
+```
+
+## Data Partioning and Scaling
+
+```{r}
+airbnb1 <- scale(airbnb[2:310])
+airbnb_final <- data.frame(airbnb1, airbnb$price)
+set.seed(1)
+myIndex<- createDataPartition(airbnb_final$airbnb.price, p=0.7, list=FALSE)
+trainSet <- airbnb_final[myIndex,]
+validationSet <- airbnb_final[-myIndex,]
+```
+
+## Recipe Creation
+
+```{r}
+recipe1 <- recipe(airbnb.price ~ accommodates + num_of_amenities  +  `property_typeRoom.in.boutique.hotel` + `property_typeEntire.villa` + `property_typeEntire.townhouse` + `neighbourhoodWest.Village` + bedrooms + `property_typeEntire.resort` + `neighbourhoodFlatbush` + `property_typePrivate.room.in.townhouse` + longitude +  `neighbourhoodUpper.West.Side` , data = trainSet, importance = TRUE)
+
+recipe2 <- recipe(airbnb.price ~ accommodates + num_of_amenities  + `property_typePrivate.room.in.condominium` + `neighbourhoodElmhurst` + `property_typeRoom.in.boutique.hotel` + `property_typeEntire.villa` + `property_typeEntire.townhouse` + `neighbourhoodWest.Village` + `property_typeShared.room.in.apartment` + bedrooms + `property_typeEntire.resort` + `neighbourhoodFlatbush` + `property_typePrivate.room.in.townhouse` + `property_typePrivate.room.in.house` + longitude +  `neighbourhoodUpper.West.Side` + `property_typeEntire.house` , data = trainSet, importance = TRUE)
+
+recipe3 <- recipe(airbnb.price ~ accommodates + bedrooms + room_typePrivate.room + property_typePrivate.room.in.apartment + property_typeEntire.apartment + longitude + property_typeEntire.townhouse + property_typeEntire.condominium + property_typeEntire.house + property_typeRoom.in.hotel + neighbourhoodMidtown  + property_typePrivate.room.in.house + neighbourhoodTribeca + property_typeEntire.loft + neighbourhoodLower.East.Side + property_typePrivate.room.in.townhouse + host_total_listings_count + neighbourhoodBushwick + num_of_amenities + neighbourhoodUpper.West.Side + neighbourhoodSoHo + property_typeEntire.serviced.apartment + neighbourhoodBedford.Stuyvesant + neighbourhoodTheater.District + neighbourhoodGreenwich.Village + property_typeRoom.in.boutique.hotel + property_typeEntire.villa + room_typeHotel.room + property_typePrivate.room.in.resort + property_typeEntire.resort + neighbourhoodWest.Village + neighbourhoodWoodside + neighbourhoodMurray.Hill + neighbourhoodFlatiron.District + neighbourhoodChelsea + neighbourhoodHell.s.Kitchen + property_typeShared.room.in.apartment  , data = trainSet, importance = TRUE)
+```
+
+## Data Modeling
+
+### Linear Model
+
+```{r}
+lin_model <- lm(airbnb.price ~ accommodates + num_of_amenities  +  `property_typeRoom.in.boutique.hotel` + `property_typeEntire.villa` + `property_typeEntire.townhouse` + `neighbourhoodWest.Village` + bedrooms + `property_typeEntire.resort` + `neighbourhoodFlatbush` + `property_typePrivate.room.in.townhouse` + longitude +  `neighbourhoodUpper.West.Side` , data = trainSet)
+
+summary(lin_model)
+
+```
+
+```{r}
+predicted_value_linear <- predict(lin_model, validationSet)
+
+# Calculate mean squared error (MSE)
+MSE <- mean((predicted_value_linear - validationSet$airbnb.price)^2)
+```
+
+### Linear Model 2
+
+```{r}
+lin_model2 <- lm(airbnb.price ~ accommodates + num_of_amenities  + `property_typePrivate.room.in.condominium` + `neighbourhoodElmhurst` + `property_typeRoom.in.boutique.hotel` + `property_typeEntire.villa` + `property_typeEntire.townhouse` + `neighbourhoodWest.Village` + `property_typeShared.room.in.apartment` + bedrooms + `property_typeEntire.resort` + `neighbourhoodFlatbush` + `property_typePrivate.room.in.townhouse` + `property_typePrivate.room.in.house` + longitude +  `neighbourhoodUpper.West.Side` + `property_typeEntire.house` , data = trainSet)
+
+summary(lin_model2)
+```
+
+```{r}
+predicted_value_linear2 <- predict(lin_model2, validationSet)
+
+# Calculate mean squared error (MSE)
+MSE2 <- mean((predicted_value_linear2 - validationSet$airbnb.price)^2)
+```
+
+### Linear Model 3
+
+```{r}
+lin_model3 <- lm(airbnb.price ~ accommodates + bedrooms + room_typePrivate.room + property_typePrivate.room.in.apartment + property_typeEntire.apartment + longitude + property_typeEntire.townhouse + property_typeEntire.condominium + property_typeEntire.house + property_typeRoom.in.hotel + neighbourhoodMidtown  + property_typePrivate.room.in.house + neighbourhoodTribeca + property_typeEntire.loft + neighbourhoodLower.East.Side + property_typePrivate.room.in.townhouse + host_total_listings_count + neighbourhoodBushwick + num_of_amenities + neighbourhoodUpper.West.Side + neighbourhoodSoHo + property_typeEntire.serviced.apartment + neighbourhoodBedford.Stuyvesant + neighbourhoodTheater.District + neighbourhoodGreenwich.Village + property_typeRoom.in.boutique.hotel + property_typeEntire.villa + room_typeHotel.room + property_typePrivate.room.in.resort + property_typeEntire.resort + neighbourhoodWest.Village + neighbourhoodWoodside + neighbourhoodMurray.Hill + neighbourhoodFlatiron.District + neighbourhoodChelsea + neighbourhoodHell.s.Kitchen + property_typeShared.room.in.apartment  , data = trainSet)
+
+summary(lin_model3)
+
+```
+
+```{r}
+predicted_value_linear3 <- predict(lin_model3, validationSet)
+
+# Calculate mean squared error (MSE)
+MSE3 <- mean((predicted_value_linear3 - validationSet$airbnb.price)^2)
+```
+
+```{r}
+plot(lin_model3, which = 2)
+```
+
+
+### KNN Model 1
+
+```{r}
+myCtrl <- trainControl(method="cv", number=10)
+myGrid <- expand.grid(.k=c(1:100))
+set.seed(1)
+KNN_fit <- train(airbnb.price ~ accommodates + num_of_amenities  +  `property_typeRoom.in.boutique.hotel` + `property_typeEntire.villa` + `property_typeEntire.townhouse` + `neighbourhoodWest.Village` + bedrooms + `property_typeEntire.resort` + `neighbourhoodFlatbush` + `property_typePrivate.room.in.townhouse` + longitude +  `neighbourhoodUpper.West.Side` , data=trainSet, method = "knn", trControl=myCtrl, tuneGrid = myGrid)
+KNN_fit
+
+summary(KNN_fit)
+
+```
+
+```{r}
+KNN_Class <- predict(KNN_fit, newdata = validationSet) 
+
+mse_knn1 <- mean((KNN_Class - validationSet$airbnb.price)^2)
+```
+
+### KNN Model 2
+
+```{r}
+myCtrl <- trainControl(method="cv", number=10)
+myGrid <- expand.grid(.k=c(1:100))
+set.seed(1)
+KNN_fit2 <- train(airbnb.price ~ accommodates + num_of_amenities  + `property_typePrivate.room.in.condominium` + `neighbourhoodElmhurst` + `property_typeRoom.in.boutique.hotel` + `property_typeEntire.villa` + `property_typeEntire.townhouse` + `neighbourhoodWest.Village` + `property_typeShared.room.in.apartment` + bedrooms + `property_typeEntire.resort` + `neighbourhoodFlatbush` + `property_typePrivate.room.in.townhouse` + `property_typePrivate.room.in.house` + longitude +  `neighbourhoodUpper.West.Side` + `property_typeEntire.house` , data=trainSet, method = "knn", trControl=myCtrl, tuneGrid = myGrid)
+KNN_fit2
+```
+
+```{r}
+KNN_Class2 <- predict(KNN_fit2, newdata = validationSet) 
+
+mse_knn2 <- mean((KNN_Class2 - validationSet$airbnb.price)^2)
+```
+
+### KNN Model 3
+
+```{r}
+myCtrl <- trainControl(method="cv", number=10)
+myGrid <- expand.grid(.k=c(1:100))
+set.seed(1)
+KNN_fit3 <- train(airbnb.price ~ accommodates + bedrooms + room_typePrivate.room + property_typePrivate.room.in.apartment + property_typeEntire.apartment + longitude + property_typeEntire.townhouse + property_typeEntire.condominium + property_typeEntire.house + property_typeRoom.in.hotel + neighbourhoodMidtown  + property_typePrivate.room.in.house + neighbourhoodTribeca + property_typeEntire.loft + neighbourhoodLower.East.Side + property_typePrivate.room.in.townhouse + host_total_listings_count + neighbourhoodBushwick + num_of_amenities + neighbourhoodUpper.West.Side + neighbourhoodSoHo + property_typeEntire.serviced.apartment + neighbourhoodBedford.Stuyvesant + neighbourhoodTheater.District + neighbourhoodGreenwich.Village + property_typeRoom.in.boutique.hotel + property_typeEntire.villa + room_typeHotel.room + property_typePrivate.room.in.resort + property_typeEntire.resort + neighbourhoodWest.Village + neighbourhoodWoodside + neighbourhoodMurray.Hill + neighbourhoodFlatiron.District + neighbourhoodChelsea + neighbourhoodHell.s.Kitchen + property_typeShared.room.in.apartment  , data=trainSet, method = "knn", trControl=myCtrl, tuneGrid = myGrid)
+KNN_fit3
+```
+
+```{r}
+KNN_Class3 <- predict(KNN_fit3, newdata = validationSet) 
+
+mse_knn3 <- mean((KNN_Class3 - validationSet$airbnb.price)^2)
+```
+
+### Random Forests 1
+
+```{r}
+set.seed(1)
+randomforest_tree <- randomForest(airbnb.price ~ accommodates + num_of_amenities  +  `property_typeRoom.in.boutique.hotel` + `property_typeEntire.villa` + `property_typeEntire.townhouse` + `neighbourhoodWest.Village` + bedrooms + `property_typeEntire.resort` + `neighbourhoodFlatbush` + `property_typePrivate.room.in.townhouse` + longitude +  `neighbourhoodUpper.West.Side` , data = trainSet, ntree = 100, mtry = sqrt(309), importance = TRUE)
+
+```
+
+
+```{r}
+predicted_class <- predict(randomforest_tree, validationSet)
+
+mse_rf1 <- mean((predicted_class - validationSet$airbnb.price)^2)
+```
+
+### Random Forests 2
+
+```{r}
+set.seed(1)
+randomforest_tree2 <- randomForest(airbnb.price ~ accommodates + num_of_amenities  + `property_typePrivate.room.in.condominium` + `neighbourhoodElmhurst` + `property_typeRoom.in.boutique.hotel` + `property_typeEntire.villa` + `property_typeEntire.townhouse` + `neighbourhoodWest.Village` + `property_typeShared.room.in.apartment` + bedrooms + `property_typeEntire.resort` + `neighbourhoodFlatbush` + `property_typePrivate.room.in.townhouse` + `property_typePrivate.room.in.house` + longitude +  `neighbourhoodUpper.West.Side` + `property_typeEntire.house` , data = trainSet, ntree = 100, mtry = sqrt(309), importance = TRUE)
+
+```
+
+```{r}
+predicted_class2 <- predict(randomforest_tree2, validationSet)
+
+mse_rf2 <- mean((predicted_class2 - validationSet$airbnb.price)^2)
+```
+
+### Random Forests 3
+
+```{r}
+set.seed(1)
+randomforest_tree3  <- randomForest(airbnb.price ~ accommodates + bedrooms + room_typePrivate.room + property_typePrivate.room.in.apartment + property_typeEntire.apartment + longitude + property_typeEntire.townhouse + property_typeEntire.condominium + property_typeEntire.house + property_typeRoom.in.hotel + neighbourhoodMidtown  + property_typePrivate.room.in.house + neighbourhoodTribeca + property_typeEntire.loft + neighbourhoodLower.East.Side + property_typePrivate.room.in.townhouse + host_total_listings_count + neighbourhoodBushwick + num_of_amenities + neighbourhoodUpper.West.Side + neighbourhoodSoHo + property_typeEntire.serviced.apartment + neighbourhoodBedford.Stuyvesant + neighbourhoodTheater.District + neighbourhoodGreenwich.Village + property_typeRoom.in.boutique.hotel + property_typeEntire.villa + room_typeHotel.room + property_typePrivate.room.in.resort + property_typeEntire.resort + neighbourhoodWest.Village + neighbourhoodWoodside + neighbourhoodMurray.Hill + neighbourhoodFlatiron.District + neighbourhoodChelsea + neighbourhoodHell.s.Kitchen + property_typeShared.room.in.apartment , data = trainSet, ntree = 100, mtry = sqrt(309), importance = TRUE)
+
+```
+
+```{r}
+predicted_class3 <- predict(randomforest_tree3, validationSet)
+
+mse_rf3 <- mean((predicted_class3 - validationSet$airbnb.price)^2)
+
+```
+
+```{r}
+varImpPlot(randomforest_tree3, type=1)
+```
+
